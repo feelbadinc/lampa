@@ -1,1 +1,9 @@
-{}
+{
+  "torrents_use": true,
+  "disable_features": {
+    "dmca": true,
+    "lgbt": true,
+    "ads": true,
+    "blacklist": true
+  }
+}
