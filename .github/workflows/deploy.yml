@@ -1,0 +1,115 @@
+name: Deploy from upstream
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: Skip upstream check
+        type: boolean
+        default: false
+
+  schedule:
+    - cron: "0 0 * * *"
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  UPSTREAM_REPO: yumata/lampa-source
+
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+
+    outputs:
+      skip_build: ${{ steps.check.outputs.skip_build }}
+      last_deploy: ${{ steps.check.outputs.last_deploy }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Check against deploy
+        id: check
+        env:
+          FORCE_BUILD: ${{ inputs.force_build }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_API_VERSION: "2026-03-10"
+        run: bash .github/scripts/check.sh
+
+  build-app:
+    runs-on: ubuntu-latest
+    needs: check-upstream
+    if: needs.check-upstream.outputs.skip_build != 'true'
+
+    permissions:
+      pages: write
+      id-token: write
+      contents: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    env:
+      BUILD_DIR: build/github/lampa
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Clone upstream repo
+        env:
+          LAST_DEPLOY: ${{ needs.check-upstream.outputs.last_deploy }}
+        run: bash .github/scripts/clone.sh
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "lts/*"
+          check-latest: true
+          package-manager-cache: false
+
+      - name: Install Node.js modules
+        working-directory: _source
+        run: |
+          npm install \
+            --omit=optional \
+            --loglevel=error \
+            --no-audit \
+            --no-fund
+
+      - name: Install inotify-tools
+        run: |
+          which inotifywait || \
+            NEEDRESTART_SUSPEND=1 \
+            sudo -E apt-get install -qqy inotify-tools
+
+      - name: Patch source
+        run: bash .github/scripts/patch.sh
+
+      - name: Run npm start pipeline
+        run: bash .github/scripts/devstart.sh
+
+      - name: Pack GitHub release
+        working-directory: _source
+        run: npx gulp pack_github
+
+      - name: Inject overrides
+        run: bash .github/scripts/overrides.sh
+
+      - name: Upload static files as artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _source/${{ env.BUILD_DIR }}
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v5
+
+      - name: Create release
+        env:
+          LAST_DEPLOY: ${{ needs.check-upstream.outputs.last_deploy }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/release.sh
