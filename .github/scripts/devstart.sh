@@ -21,6 +21,12 @@ if ! inotifywait -r -e close_write --timeout 30 \
 fi
 
 while inotifywait -r -e close_write --timeout 5 \
-  build/ dest/ plugins/ public/ > /dev/null 2>&1; do :; done
+  build/ dest/ plugins/ public/ > /dev/null 2>&1 \
+  || [ ! -s dest/app.js ]; do
+  if [ "$SECONDS" -ge 300 ]; then
+    echo "app not built after 5 minutes, exiting"
+    exit 1
+  fi
+done
 
 echo "Start pipeline finished"
